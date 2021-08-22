@@ -125,13 +125,13 @@ def fibonacci(n: int, kont: Callable[[], None]):
         return v
 ```
 
-This is not quite working, though. `v` is reinitialized in every recursion. No accumulation is possible!
+This is not quite working, even despite the syntax problem. (Where is it?) `v` is reinitialized in every recursion. No accumulation is possible!
 
 ## Step 2: A deep dive into continuation
 
 How could we rack up the value without resetting?
 
-We need a "lazy version" of this callback so that you can defer the evaluation (and get rid of the syntax problem).
+We need a "lazy version" of this callback so that you can defer the evaluation.
 
 ```python
 # Works only if the sum is availabe right away
@@ -169,7 +169,7 @@ def apply(kont: Kont, v: int):
 
 One last nuisance to deal with - what happens at the terminal condition?
 
-By terminal condition it is essentially asking what is to fill in the blank of `fibonacci(5, ?)`.
+By terminal condition it is asking what to start with for `fibonacci(5, ?)` if we'd like to evaluate `F(5)`.
 
 Remember our `apply` is a lazy version of accumulating the sum. When you have nothing to add furtuer, the only sensible move is to return what you have attained so far, i.e. `v` itself.
 
@@ -181,7 +181,7 @@ def apply(kont: Optional[Kont], v: int):
         return v
 ```
 
-Let's revisit where we leave off in step 1:
+Let's revisit where we leave off in Step 1:
 
 ```py
 def fibonacci(n: int, kont: Callable[[], None]):
@@ -237,3 +237,117 @@ def fibonacci(n: int, kont: Optional[Kont]):
 ```
 
 And it's actually working! Try `fibonacci(10, None)`!
+
+### Step 3: Putting everything back
+
+Let me remind you our goal: an iterative version of the fibonacci function. The last step we need to go through is to somehow inline `apply`.
+
+Before that we have to artifically create a while loop first because in our iterative version we can only `return` once. Remember the `v = 0` in Step 1? It's back again to allow accumulation!
+
+```py
+def fibonacci(n: int, kont: Optional[Kont]):
+    v = 0
+    while True:
+        if n <= 2:
+            return apply(kont, 1)
+        else:
+            return fibonacci(n - 1, Kont(n, kont))
+```
+
+Then we can inline `apply`:
+
+```py
+def fibonacci(n: int, kont: Optional[Kont]):
+    v = 0
+    while True:
+        if n <= 2:
+            if kont is not None:
+                # substituting `v` by `1`
+                return 1 + fibonacci(kont.n - 2, kont.next)
+            else:
+                return 1
+        else:
+            return fibonacci(n - 1, Kont(n, kont))
+```
+
+Do you see the tail-recursion form? In all `return`s the only non-trivial function is `fibonacci` itself.
+
+Let's try to eliminate them one by one, starting from the `n > 2` case:
+
+```py
+# from
+else:
+    return fibonacci(n - 1, Kont(n, kont))
+# to
+else:
+    kont = Kont(n, kont)
+    n = n - 1
+```
+
+We must update `kont` first because we have preserve the current `n`. Order matters!
+
+That leaves us the `n <= 2` case. We will first handle the inner else clause, i.e. when the termination is done.
+
+```py
+# from
+if n <= 2:
+    if kont is not None:
+        # ...
+    else:
+        return 1
+# to
+if n <= 2:
+    if kont is not None:
+        # ...
+    else:
+        v += 1
+        break
+```
+
+We exit the loop because `kont is None` means "no need to continue".
+
+Only the final step remains. Let's eliminate for the case that `kont is not None`.
+
+```py
+# from
+if n <= 2:
+    if kont is not None:
+        return 1 + fibonacci(kont.n - 2, kont.next)
+    else:
+        # ...
+# to
+if n <= 2:
+    if kont is not None:
+        v += 1
+        n = kont.n - 2
+        kont = Kont(n, kont.next)
+    else:
+        # ...
+```
+
+Note that we must compute `n = kont.n - 2` before reassigning `kont`. Order matters again.
+
+We got our iterative Fibonacci function by putting pieces in place. Yay! 🎉🎉🎉
+
+```py
+from collections import namedtuple
+from typing import Optional
+
+Kont = namedtuple('Kont', 'n next')
+
+def fibonacci(n: int, kont: Optional[Kont]):
+    v = 0
+    while True:
+        if n <= 2:
+            if kont is not None:
+                v += 1
+                n = kont.n - 2
+                kont = kont.next
+            else:
+                v += 1
+                break
+        else:
+            kont = Kont(n, kont)
+            n = n - 1
+    return v
+```
