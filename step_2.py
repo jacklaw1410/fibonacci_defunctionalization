@@ -17,5 +17,5 @@ def fibonacci(n: int, kont: Optional[Kont]):
     else:
         return fibonacci(n - 1, Kont(n, kont))
 
-# fibonacci(10, None)
-# > 55
+# > fibonacci(10, None)
+# 55

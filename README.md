@@ -153,7 +153,7 @@ class Kont:
 
 (I'm using [the type hint syntax](https://docs.python.org/3/library/typing.html), which is available since Python 3.5. But in the code sample it will just be a `namedtuple`. Again, for the sake of brevity.)
 
-It is a linked list by its own right, and also a manifestation of the _call stack_ of our recursion. We will drill down into this fact a bit later.
+It is a linked list by its own right, and also a manifestation of the _call stack_ of our recursion.
 
 So finally we can refactor our `callback`. Observe that now this method need not live inside `fibonacci`.
 
@@ -242,11 +242,10 @@ And it's actually working! Try `fibonacci(10, None)`!
 
 Let me remind you our goal: an iterative version of the fibonacci function. The last step we need to go through is to somehow inline `apply`.
 
-Before that we have to artifically create a while loop first because in our iterative version we can only `return` once. Remember the `v = 0` in Step 1? It's back again to allow accumulation!
+Before that we have to artifically create a while loop first because in our iterative version we can only `return` once, for the final output.
 
 ```py
-def fibonacci(n: int, kont: Optional[Kont]):
-    v = 0
+def fibonacci(n: int, kont: Optional[Kont], v: int = 0):
     while True:
         if n <= 2:
             return apply(kont, 1)
@@ -254,11 +253,12 @@ def fibonacci(n: int, kont: Optional[Kont]):
             return fibonacci(n - 1, Kont(n, kont))
 ```
 
+Remember the `v = 0` in Step 1? It comes back in a little different form. I will explain the benefit of making it an input argument.
+
 Then we can inline `apply`:
 
 ```py
-def fibonacci(n: int, kont: Optional[Kont]):
-    v = 0
+def fibonacci(n: int, kont: Optional[Kont], v: int = 0):
     while True:
         if n <= 2:
             if kont is not None:
@@ -272,7 +272,7 @@ def fibonacci(n: int, kont: Optional[Kont]):
 
 Do you see the tail-recursion form? In all `return`s the only non-trivial function is `fibonacci` itself.
 
-Let's try to eliminate them one by one, starting from the `n > 2` case:
+Let's try to eliminate them one by one, starting with the `n > 2` case:
 
 ```py
 # from
@@ -284,7 +284,7 @@ else:
     n = n - 1
 ```
 
-We must update `kont` first because we have preserve the current `n`. Order matters!
+We must update `kont` first because we have to preserve the current `n`. Order matters!
 
 That leaves us the `n <= 2` case. We will first handle the inner else clause, i.e. when the termination is done.
 
@@ -304,9 +304,9 @@ if n <= 2:
         break
 ```
 
-We exit the loop because `kont is None` means "no need to continue".
+We break the loop because `kont is None` means "no need to continue".
 
-Only the final step remains. Let's eliminate for the case that `kont is not None`.
+It comes to the final step. Let's eliminate for the case that `kont is not None`.
 
 ```py
 # from
@@ -320,7 +320,7 @@ if n <= 2:
     if kont is not None:
         v += 1
         n = kont.n - 2
-        kont = Kont(n, kont.next)
+        kont = kont.next
     else:
         # ...
 ```
@@ -335,8 +335,7 @@ from typing import Optional
 
 Kont = namedtuple('Kont', 'n next')
 
-def fibonacci(n: int, kont: Optional[Kont]):
-    v = 0
+def fibonacci(n: int, kont: Optional[Kont], v: int = 0):
     while True:
         if n <= 2:
             if kont is not None:
@@ -350,4 +349,68 @@ def fibonacci(n: int, kont: Optional[Kont]):
             kont = Kont(n, kont)
             n = n - 1
     return v
+```
+
+The recursion limit is no longer a constraint. You can put any `n` you like (as long as you're willing to wait).
+
+## Why even bother?
+
+What can we get from this exercise, apart from the intellectual joy of puzzle solving? Some of you may be aware of tail-call optimization, but it does little help to a `O(2 ^ n)` algorithm, especially when a `O(n)` rival is within arm's reach.
+
+In my opinion, the gist of "defunctionaliation" is giving computation a data structurre.
+
+To illustrate my point, let's `print(f'n={n}, v={v}, kont={kont}')` for each step:
+
+```python
+> fibonacci(n=4, v=0, kont=None)
+n=4, v=0, kont=None
+n=3, v=0, kont=Kont(n=4, next=None)
+n=2, v=0, kont=Kont(n=3, next=Kont(n=4, next=None))
+n=1, v=1, kont=Kont(n=4, next=None)
+n=2, v=2, kont=None
+```
+
+`kont` keeps track of "what remaining stack has to be unwound?". A "stack unwind" is (generally) when an effect takes place ("add 1 to the sum" in our case).
+
+The combination of `n`, `v` and `kont` contain all information we need about the computation. Imagine the iteration is interrupted at the third step. We may "resume" it if we know the values of three variables:
+
+```python
+> fibonacci(n=2, v=0, kont=Kont(n=3, next=Kont(n=4, next=None)))
+n=2, v=0, kont=Kont(n=3, next=Kont(n=4, next=None))
+n=1, v=1, kont=Kont(n=4, next=None)
+n=2, v=2, kont=None
+```
+
+A real life application of this property is [React Concurrent Mode](https://reactjs.org/docs/concurrent-mode-intro.html). The rendering of the virtual DOM tree, by its nature a recursion, has been reimplemented by a scheduler that can pause when more important updates emerge, and resume when resources are freed up.
+
+(I learnt this fact more than a year ago. Let me know if things change since then.)
+
+## Final note
+
+What I demonstrated in Step 2 is NOT a tail-call optimized form.
+
+Here is an example of TCO form, which I didn't use because it'll further complicate the subject.
+
+```py
+from collections import namedtuple
+from typing import Optional
+
+Kont1 = namedtuple('Kont', 'n next')
+Kont2 = namedtuple('Kont', 'v next')
+
+Kont = Union[Kont1, Kont2]
+
+def apply(kont: Optional[Kont], v: int):
+    if isinstance(kont, Kont1):
+        return fibonacci(kont.n - 2, Kont2(v, kont.next))
+    elif isinstance(kont, Kont2):
+        return apply(kont.next, v + kont.v)
+    else:
+        return v
+
+def fibonacci(n: int, kont: Optional[Kont]):
+    if n <= 2:
+        return apply(kont, 1)
+    else:
+        return fibonacci(n - 1, Kont(n, kont))
 ```

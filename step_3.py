@@ -21,5 +21,5 @@ def fibonacci(n: int, kont: Optional[Kont]):
     return v
 
 
-# fibonacci(30, None)
-# > 832040
+# > fibonacci(30, None)
+# 832040
